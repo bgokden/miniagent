@@ -15,6 +15,7 @@ import (
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/dom"
+	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/device"
 	"github.com/joho/godotenv"
@@ -65,7 +66,7 @@ func Search(text string) string {
 	search := serpapi.NewGoogleSearch(parameter, serpAPIKey)
 	data, err := search.GetJSON()
 	if err != nil {
-		panic(err)
+		return err.Error()
 	}
 
 	results := data["organic_results"].([]interface{})
@@ -89,7 +90,14 @@ func Search(text string) string {
 }
 
 func Browse(url string) string {
-	ctx, cancel := chromedp.NewContext(context.Background())
+
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.DisableGPU,
+		chromedp.UserDataDir("./tmp/user"),
+	)
+	allocatorCtx, allocatorCancel := chromedp.NewExecAllocator(context.Background(), opts...)
+	defer allocatorCancel()
+	ctx, cancel := chromedp.NewContext(allocatorCtx)
 	defer cancel()
 
 	var nodes []*cdp.Node
@@ -97,7 +105,7 @@ func Browse(url string) string {
 	var sb strings.Builder
 	var b1 []byte
 	err := chromedp.Run(ctx,
-		chromedp.Emulate(device.IPhone7landscape),
+		chromedp.Emulate(device.IPhone13),
 		chromedp.Navigate(url),
 		chromedp.WaitVisible(`body`, chromedp.ByQuery),
 		chromedp.Nodes(`html`, &nodes, chromedp.ByQuery),
@@ -110,10 +118,22 @@ func Browse(url string) string {
 			printNodes(&sb, nodes, "", "  ", 20)
 			return nil
 		}),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			cookies, err := network.GetCookies().Do(ctx)
+			if err != nil {
+				return err
+			}
+			// for i, cookie := range cookies {
+			// 	log.Printf("chrome cookie %d: %+v", i, cookie.Name)
+			// }
+			log.Println(len(cookies))
+			return nil
+		}),
 	)
 	if err != nil {
+
 		log.Println(err.Error())
-		// return err.Error()
+		return err.Error()
 	}
 	if err := os.WriteFile("./tmp/screenshot1.png", b1, 0o644); err != nil {
 		log.Println(err.Error())
@@ -165,7 +185,6 @@ func printNodes(w *strings.Builder, nodes []*cdp.Node, padding, indent string, d
 	for _, node := range nodes {
 		nodeName := strings.ToLower(node.NodeName)
 		if !names[nodeName] {
-			// log.Printf("NodeName was %s\n", nodeName)
 			continue
 		}
 		switch {
@@ -200,15 +219,11 @@ func parseOutput(text string) (functionName, input, reasoning string, err error)
 			reasoning = strings.TrimSpace(strings.TrimPrefix(line, "Reasoning:"))
 		}
 	}
-	if functionName == "" || input == "" {
+	if functionName == "" {
 		err = fmt.Errorf("missing required fields in output. Output %s", text)
 	}
 	return
 }
-
-// - Function: Browse
-//   Description: This browse is useful when users want to get content of a page.
-//   Input: websiste url
 
 func createPrompt(userInput string, knowledge []string) string {
 	knowledge_str := strings.Join(knowledge, "\n")
@@ -219,10 +234,15 @@ Active Knowledge:
 Functions:
 - Function: Search
   Description: This search is useful to get reliable quick data.
-  Input: Search  Input Text
+  Input: Search  Input 
+- Function: Browse
+  Description: This browse is useful when users want to get content of a page.
+  Input: websiste url
+- Function: CurrentTime
+  Description: Get Current Time
 - Function: Finish
   Description: This is useful when the agent decides to finish this task.
-  Input: Summarize findings based on your knowledge.
+  Input: Result of the task.
 Output should only include one function as the next step using the format:
 Function: Function name
 Input: Function Input as text
@@ -328,24 +348,94 @@ func callAPI(prompt string) (*GenerateResponse, error) {
 	return &generateResp, nil
 }
 
-func summarizeWebPage(topic, input string) string {
-	prompt := fmt.Sprintf(`Based on topic "%s", Extract and summarize the key content from following web page as input, 
-	focusing on the main text, headings, and significant links. 
-	Provide a concise summary highlighting the central themes or information presented on the page, 
-	along with the most relevant links for further reading or context.
-	Ignore cookie and consent forms. 
-	Output should be in the following format:
-	Content: Content of the web page excluding technologies used.
-	IsRelated: Yes or No based on if it is related to the topic.
-	Links: List of useful links.
-	- Link 1
-	- Link 2
-	\n %s`, topic, input)
+// splitIntoChunks splits a text into chunks of a specified length.
+func splitIntoChunks(text string, chunkSize int) []string {
+	var chunks []string
+	for len(text) > 0 {
+		if len(text) < chunkSize {
+			chunks = append(chunks, text)
+			break
+		}
+
+		chunk := text[:chunkSize]
+		chunks = append(chunks, chunk)
+		text = text[chunkSize:]
+	}
+
+	return chunks
+}
+
+func inferPrompt(input string) string {
+	prompt := fmt.Sprintf("Infer the intention of the user and write as a good formatted prompt for an LLM based on following input: %s", input)
 	response, err := callAPI(prompt)
 	if err != nil {
-		return err.Error()
+		return input
 	}
 	return response.Response
+}
+
+func summarizeWebPage(topic, input string) string {
+	texts := splitIntoChunks(input, 1000)
+	previous := ""
+	isRelated := false
+	for i, text := range texts {
+		prompt := fmt.Sprintf(`"For the topic '%s', please prograsively extract essential information from the given web page and previous extract, 
+		concentrating on the main body text, headings, and significant hyperlinks. 
+		Summarize the central themes or key information related to the specified topic, 
+		ensuring the summary is succinct and directly relevant. 
+		Exclude any details about website technologies or unrelated content. 
+		Additionally, identify if the content is relevant to the given topic. 
+		Provide a list of the most pertinent links for additional reading or context, disregarding cookie and consent notices. 
+		The output should be formatted as follows:
+
+		Content: [Concise summary focusing on the topic]
+		IsRelated: [Yes/No, based on relevance to the topic]
+		Links: [Relevant links for further information]
+		- Link 1
+		- Link 2
+
+		Previous Extract:
+		%s
+
+		WebPage:
+		%s"`, topic, previous, text)
+		response, err := callAPI(prompt)
+		if err != nil {
+			if len(previous) > 0 {
+				return previous
+			}
+			return err.Error()
+		}
+		previous = response.Response
+		isRelated = findIsRelatedStatus(previous)
+		if !isRelated {
+			return previous
+		}
+		log.Printf("Iteration %d Summary: %s", i, previous)
+		if i > 5 {
+			break
+		}
+	}
+	return previous
+}
+
+func findIsRelatedStatus(text string) bool {
+	lines := strings.Split(text, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "IsRelated: Yes") {
+			return true
+		}
+		if strings.Contains(line, "IsRelated: No") {
+			return false
+		}
+	}
+	return true
+}
+
+// GetCurrentTimeString returns the current time as a string.
+func GetCurrentTimeString() string {
+	currentTime := time.Now()
+	return fmt.Sprintf("Current time is %s\n", currentTime.Format("2006-01-02 15:04:05"))
 }
 
 func main() {
@@ -357,15 +447,11 @@ func main() {
 		log.Printf("Error pulling model: %s", err_pull.Error())
 	}
 
-	userInput := "Please tell me the age of girlfriend of Leonardo Di Caprio currently."
+	userInput := "Create a list for VCs in the Neherlands who are looking to invest in startups."
 
-	// result := Browse("https://weather.com/weather/today/l/a0a48c0f8630d7e60cc5d03bf2dc2d039cad87e8dfdb8fc476a43473a6ff7e17")
-	// // fmt.Println(result)
-	// result = summarizeWebPage(userInput, result)
-	// fmt.Println("------")
-	// fmt.Println(result)
-	// fmt.Println("------")
-	// os.Exit(0)
+	userInput = inferPrompt(userInput)
+
+	log.Println(userInput)
 
 	knowledge := []string{}
 	var functionName, input, reasoning string
@@ -384,7 +470,8 @@ func main() {
 		functionName, input, reasoning, err = parseOutput(generateResp.Response)
 		if err != nil {
 			fmt.Println("Error parsing output:", err)
-			return
+			knowledge = append(knowledge, "Error parsing output.")
+			continue
 		}
 
 		fmt.Printf("Function Name: %s\nInput: %s\nReasoning: %s\n------\n", functionName, input, reasoning)
@@ -393,17 +480,24 @@ func main() {
 			result := Search(input)
 			fmt.Printf("Result:\n%s\n", result)
 			knowledge = append(knowledge, result)
+		} else if functionName == "CurrentTime" {
+			result := GetCurrentTimeString()
+			fmt.Printf("Result:\n%s\n", result)
+			knowledge = append(knowledge, result)
 		} else if functionName == "Browse" {
 			result := Browse(input)
 			result = summarizeWebPage(userInput, result)
 			if len(result) > 1000 {
 				result = result[:1000]
 			}
-			result = fmt.Sprintf("URL: %s \nSummary: %s \n Website might be blocking due to cookie consent\n", input, result)
+			result = fmt.Sprintf("URL: %s \nSummary: %s \n\n", input, result)
 			fmt.Printf("Result:\n%s\n", result)
 			knowledge = append(knowledge, result)
 		} else if functionName == "Finish" {
 			fmt.Println(input)
+		}
+		if len(knowledge) > 10 {
+			knowledge = knowledge[len(knowledge)-10:]
 		}
 	}
 
