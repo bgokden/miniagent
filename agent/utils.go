@@ -213,7 +213,7 @@ func printNodes(w *strings.Builder, nodes []*cdp.Node, padding, indent string, d
 }
 
 func parseOutput(text string) (functionName, input, reasoning string, err error) {
-	text = restructureOutput(text)
+	// text = restructureOutput(text)
 	lines := strings.Split(text, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -446,7 +446,7 @@ func summarizeWebPage(topic, input string) string {
 		if !isRelated {
 			return previous
 		}
-		log.Printf("Iteration %d Summary: %s", i, previous)
+		// log.Printf("Iteration %d Summary: %s", i, previous)
 		if i > 5 {
 			break
 		}

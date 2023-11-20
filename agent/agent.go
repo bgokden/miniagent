@@ -2,7 +2,6 @@ package agent
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/bgokden/miniagent/messages"
 	"github.com/bgokden/miniagent/prompt"
@@ -147,7 +146,7 @@ func (a *Agent) Run(input ...string) (string, error) {
 
 	userInputInferred := inferPrompt(userInput)
 
-	var functionName, functionInput, reasoning string
+	var functionName, functionInput, lastGoodInput string
 	var generateResp *GenerateResponse
 
 	for functionName != "Finish" {
@@ -157,7 +156,7 @@ func (a *Agent) Run(input ...string) (string, error) {
 			return "", err
 		}
 
-		log.Println(prompt)
+		// log.Println(prompt)
 
 		generateResp, err = callAPI(prompt)
 		if err != nil {
@@ -165,37 +164,43 @@ func (a *Agent) Run(input ...string) (string, error) {
 			return "", err
 		}
 
-		functionName, functionInput, reasoning, err = parseOutput(generateResp.Response)
+		functionName, functionInput, _, err = parseOutput(generateResp.Response)
 		if err != nil {
-			fmt.Println("Error parsing output:", err)
-			fmt.Println(generateResp.Response)
+			// fmt.Println("Error parsing output:", err)
+			// fmt.Println(generateResp.Response)
 			a.MessageHistory.AddMessage(messages.FunctionResult, "System", "", "Error parsing output.")
 			break
 			// continue
 		}
 
-		fmt.Printf("Function: %s\nInput: %s\nReasoning: %s\n------\n", functionName, functionInput, reasoning)
+		fmt.Printf("Running function: %s\n", functionName)
+
+		// fmt.Printf("Function: %s\nInput: %s\nReasoning: %s\n------\n", functionName, functionInput, reasoning)
 		result := ""
+		if len(functionInput) > 0 {
+			lastGoodInput = functionInput
+		}
 		if functionName == "Search" {
 			result = Search(functionInput)
-			fmt.Printf("Result:\n%s\n", result)
+			// fmt.Printf("Result:\n%s\n", result)
 		} else if functionName == "CurrentTime" {
 			result = GetCurrentTimeString()
-			fmt.Printf("Result:\n%s\n", result)
+			// fmt.Printf("Result:\n%s\n", result)
 		} else if functionName == "Browse" {
 			result = Browse(functionInput)
 			result = summarizeWebPage(userInput, result)
 			result = fmt.Sprintf("URL: %s \nSummary: %s \n\n", functionInput, result)
-			fmt.Printf("Result:\n%s\n", result)
-		} else if functionName == "Finish" {
-			fmt.Println(input)
+			// fmt.Printf("Result:\n%s\n", result)
 		}
+		// else if functionName == "Finish" {
+		// 	// fmt.Println(input)
+		// }
 		if len(result) > 0 {
 			a.MessageHistory.AddMessage(messages.FunctionResult, "System", functionName, result)
 		}
 	}
 
 	fmt.Println("Process completed.")
-	a.MessageHistory.AddMessage(messages.AIMessage, "AI", "", functionInput)
-	return functionInput, nil
+	a.MessageHistory.AddMessage(messages.AIMessage, "AI", "", lastGoodInput)
+	return lastGoodInput, nil
 }
