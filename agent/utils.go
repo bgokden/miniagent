@@ -213,6 +213,7 @@ func printNodes(w *strings.Builder, nodes []*cdp.Node, padding, indent string, d
 }
 
 func parseOutput(text string) (functionName, input, reasoning string, err error) {
+	text = restructureOutput(text)
 	lines := strings.Split(text, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -389,7 +390,18 @@ func splitIntoChunks(text string, chunkSize int) []string {
 }
 
 func inferPrompt(input string) string {
-	prompt := fmt.Sprintf("<|user|>Infer the intention of the user and write as a good formatted one pragraph input message including what is required and what is the finish condition for an AI based on following input: %s</s><|assistant|>", input)
+	systemText := "Analyze the user's original intent and reformulate it into a well-structured, single-paragraph input. This input should clearly outline the task requirements and specify the criteria for successful completion by an AI system, based on the following provided text:"
+	prompt := fmt.Sprintf("<|system|>%s</s><|user|>%s</s><|assistant|>", systemText, input)
+	response, err := callAPI(prompt)
+	if err != nil {
+		return input
+	}
+	return response.Response
+}
+
+func restructureOutput(input string) string {
+	systemText := "Restructure output as follows:\nFunction: name of the function\nInput: Funtion Input\nReasoning: Why this function is selected\nCritism: A critic of this action\n"
+	prompt := fmt.Sprintf("<|system|>%s</s><|user|>%s</s><|assistant|>", systemText, input)
 	response, err := callAPI(prompt)
 	if err != nil {
 		return input

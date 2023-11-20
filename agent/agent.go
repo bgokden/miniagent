@@ -88,7 +88,7 @@ func BuildTree(agent *Agent) *prompt.FunctionNode {
 	systemDescription := func(input string, maxLength int) (string, error) {
 		content := "<|system|>You are an AI Assistant.\nThis is a friendly conversation between Human and AI.\nYour primary role is to answer questions and provide assistance.\n" +
 			"Output should only include one function as the next step using the format:\n" +
-			"Function: Function name\n" +
+			"Function: name of the function\n" +
 			"Input: Function Input as text\n" +
 			"Reasoning: Reason to choose the Function and Input\n" +
 			"Critism: Self critic of the current action\n"
@@ -103,16 +103,17 @@ func BuildTree(agent *Agent) *prompt.FunctionNode {
 	functions := func(input string, maxLength int) (string, error) {
 		content := "Functions:\n" +
 			"- Function: Search\n" +
-			"  Description: This search is useful to get reliable quick data.\n" +
 			"  Input: Search Input\n" +
+			"  Description: This search is useful to get reliable quick data.\n" +
 			"- Function: Browse\n" +
-			"  Description: This browse is useful when users want to get content of a page.\n" +
 			"  Input: website url\n" +
+			"  Description: This browse is useful when users want to get content of a page.\n" +
 			"- Function: CurrentTime\n" +
 			"  Description: Get Current Time\n" +
+			"  Input: N/A\n" +
 			"- Function: Finish\n" +
-			"  Description: This is useful when the agent decides to finish this task.\n" +
-			"  Input: Result of the task.\n"
+			"  Input: Result of the task.\n" +
+			"  Description: This is useful when the agent decides to finish this task.\n"
 
 		return content, nil
 	}
@@ -146,16 +147,6 @@ func (a *Agent) Run(input ...string) (string, error) {
 
 	userInputInferred := inferPrompt(userInput)
 
-	// var err error
-	// generatedPrompt, err := a.GeneratePrompt(userInputInferred)
-	// if err != nil {
-	// 	fmt.Println("Error generating prompt:", err)
-	// 	return "", err
-	// }
-
-	// log.Println(generatedPrompt)
-
-	// knowledge := []string{}
 	var functionName, functionInput, reasoning string
 	var generateResp *GenerateResponse
 
@@ -178,40 +169,30 @@ func (a *Agent) Run(input ...string) (string, error) {
 		if err != nil {
 			fmt.Println("Error parsing output:", err)
 			fmt.Println(generateResp.Response)
-			// knowledge = append(knowledge, "Error parsing output.")
 			a.MessageHistory.AddMessage(messages.FunctionResult, "System", "", "Error parsing output.")
-			continue
+			break
+			// continue
 		}
 
-		fmt.Printf("Function Name: %s\nInput: %s\nReasoning: %s\n------\n", functionName, functionInput, reasoning)
+		fmt.Printf("Function: %s\nInput: %s\nReasoning: %s\n------\n", functionName, functionInput, reasoning)
 		result := ""
 		if functionName == "Search" {
 			result = Search(functionInput)
 			fmt.Printf("Result:\n%s\n", result)
-			// knowledge = append(knowledge, result)
 		} else if functionName == "CurrentTime" {
 			result = GetCurrentTimeString()
 			fmt.Printf("Result:\n%s\n", result)
-			// knowledge = append(knowledge, result)
 		} else if functionName == "Browse" {
 			result = Browse(functionInput)
 			result = summarizeWebPage(userInput, result)
-			// if len(result) > 1000 {
-			// 	result = result[:1000]
-			// }
 			result = fmt.Sprintf("URL: %s \nSummary: %s \n\n", functionInput, result)
 			fmt.Printf("Result:\n%s\n", result)
-			// knowledge = append(knowledge, result)
 		} else if functionName == "Finish" {
 			fmt.Println(input)
 		}
 		if len(result) > 0 {
 			a.MessageHistory.AddMessage(messages.FunctionResult, "System", functionName, result)
 		}
-
-		// if len(knowledge) > 10 {
-		// 	knowledge = knowledge[len(knowledge)-10:]
-		// }
 	}
 
 	fmt.Println("Process completed.")
