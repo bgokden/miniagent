@@ -2,15 +2,24 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/bgokden/miniagent/messages"
 	"github.com/bgokden/miniagent/prompt"
 )
 
+type FunctionInfo struct {
+	FunctionName        string
+	FunctionDescription string
+	FunctionInput       string
+	FunctionRef         func(string) string
+}
+
 type Agent struct {
 	PromptTree     *prompt.FunctionNode
 	MaxLength      int
 	MessageHistory *messages.MessageHistory
+	Functions      []FunctionInfo
 }
 
 type AgentOption func(*Agent)
@@ -29,15 +38,31 @@ func WithMaxLength(maxLength int) AgentOption {
 
 func NewAgent(options ...AgentOption) *Agent {
 	agent := &Agent{
-		MaxLength:      4000, // Default MaxLength
+		MaxLength:      8000, // Default MaxLength
 		PromptTree:     DefaultBuildTree(),
 		MessageHistory: messages.NewMessageHistory(),
+		Functions: []FunctionInfo{
+			{"Search", "This search is useful to get reliable quick data.", "Text to be searched", Search},
+			{"Browse", "This browse is useful when users want to get content of a page.", "website url", Browse},
+			{"CurrentTime", "This function is useful when you need the current time", "N/A", CurrentTime},
+			{"Finish", "This is useful when the agent decides to finish this task and generate output.", "The output that you want to print as the result of your task as detailed as possible.", Finish},
+		},
 	}
 	for _, option := range options {
 		option(agent)
 	}
 	agent.PromptTree = BuildTree(agent)
 	return agent
+}
+
+func findFunctionByName(functions []FunctionInfo, name string) (FunctionInfo, bool) {
+	lowerName := strings.ToLower(name)
+	for _, fn := range functions {
+		if strings.ToLower(fn.FunctionName) == lowerName {
+			return fn, true
+		}
+	}
+	return FunctionInfo{}, false
 }
 
 func (a *Agent) GeneratePrompt(input ...string) (string, string, error) {
@@ -87,14 +112,34 @@ func DefaultBuildTree() *prompt.FunctionNode {
 	return root
 }
 
+func FunctionsAsString(functions []FunctionInfo) string {
+	var result strings.Builder
+	result.WriteString("------\n")
+	result.WriteString("Functions:\n")
+	for _, fn := range functions {
+		result.WriteString(fmt.Sprintf("- %s:\n", fn.FunctionDescription))
+		result.WriteString(fmt.Sprintf("Function: %s\n", fn.FunctionName))
+		// result.WriteString(fmt.Sprintf("Description: %s\n", fn.FunctionDescription))
+		result.WriteString(fmt.Sprintf("Input: %s\n", fn.FunctionInput))
+	}
+	result.WriteString("------\n")
+	return result.String()
+}
+
 func BuildTree(agent *Agent) *prompt.FunctionNode {
 	systemDescription := func(input string, maxLength int) (string, error) {
-		content := "You are an AI Assistant.\nThis is a friendly conversation between Human and AI.\nYour primary role is to answer questions and provide assistance.\n" +
+		content := "You are an AI Assistant.\n" +
+			"This is a friendly conversation between Human and AI.\n" +
+			"Your primary role is to answer questions and provide assistance.\n" +
 			"Output should only include one function as the next step using the format:\n" +
+			"OUTPUT_FORMAT:\n" +
 			"Function: name of the function\n" +
 			"Input: Function Input as text\n" +
 			"Reasoning: Reason to choose the Function and Input\n" +
-			"Critism: Self critic of the current action\n"
+			"Critism: Self critic of the current action\n" +
+			"END_OF_OUTPUT_FORMAT:\n" +
+			"Please only use the given functions in your responses.\n" +
+			"Please write only one function in one response.\n"
 		return content, nil
 	}
 	longTermMemory := func(input string, maxLength int) (string, error) {
@@ -104,20 +149,7 @@ func BuildTree(agent *Agent) *prompt.FunctionNode {
 		return fmt.Sprintf("Conversation:\n%s\n", agent.MessageHistory.GetAllMessagesAsString()), nil
 	}
 	functions := func(input string, maxLength int) (string, error) {
-		content := "Functions:\n" +
-			"- Function: Search\n" +
-			"  Input: Search Input\n" +
-			"  Description: This search is useful to get reliable quick data.\n" +
-			"- Function: Browse\n" +
-			"  Input: website url\n" +
-			"  Description: This browse is useful when users want to get content of a page.\n" +
-			"- Function: CurrentTime\n" +
-			"  Description: Get Current Time\n" +
-			"  Input: N/A\n" +
-			"- Function: Finish\n" +
-			"  Input: Result of the task.\n" +
-			"  Description: This is useful when the agent decides to finish this task.\n"
-
+		content := FunctionsAsString(agent.Functions)
 		return content, nil
 	}
 	// askingDescription := func(input string, maxLength int) (string, error) {
@@ -184,18 +216,26 @@ func (a *Agent) Run(input ...string) (string, error) {
 		if len(functionInput) > 0 {
 			lastGoodInput = functionInput
 		}
-		if functionName == "Search" {
-			result = Search(functionInput)
-			// fmt.Printf("Result:\n%s\n", result)
-		} else if functionName == "CurrentTime" {
-			result = GetCurrentTimeString()
-			// fmt.Printf("Result:\n%s\n", result)
-		} else if functionName == "Browse" {
-			result = Browse(functionInput)
-			result = summarizeWebPage(userInput, result)
-			result = fmt.Sprintf("URL: %s \nSummary: %s \n\n", functionInput, result)
-			// fmt.Printf("Result:\n%s\n", result)
+		if fn, found := findFunctionByName(a.Functions, functionName); found {
+			result = fn.FunctionRef(functionInput)
+			fmt.Println("Result:", result)
+		} else {
+			fmt.Println("Function not found:", functionName)
+			result = Search(functionInput) // Defauls function call
 		}
+
+		// if functionName == "Search" {
+		// 	result = Search(functionInput)
+		// 	// fmt.Printf("Result:\n%s\n", result)
+		// } else if functionName == "CurrentTime" {
+		// 	result = GetCurrentTimeString()
+		// 	// fmt.Printf("Result:\n%s\n", result)
+		// } else if functionName == "Browse" {
+		// 	result = Browse(functionInput)
+		// 	result = summarizeWebPage(userInput, result)
+		// 	result = fmt.Sprintf("URL: %s \nSummary: %s \n\n", functionInput, result)
+		// 	// fmt.Printf("Result:\n%s\n", result)
+		// }
 		// else if functionName == "Finish" {
 		// 	// fmt.Println(input)
 		// }

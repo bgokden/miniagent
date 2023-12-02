@@ -25,6 +25,8 @@ import (
 
 // const MODEL_NAME = "zephyr"
 const MODEL_NAME = "neural-chat"
+
+// const MODEL_NAME = "orca-mini:13b"
 const LOG_MODEL = true
 
 type GenerateRequest struct {
@@ -216,7 +218,6 @@ func printNodes(w *strings.Builder, nodes []*cdp.Node, padding, indent string, d
 }
 
 func parseOutput(text string) (functionName, input, reasoning string, err error) {
-	// text = restructureOutput(text)
 	lines := strings.Split(text, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -226,6 +227,7 @@ func parseOutput(text string) (functionName, input, reasoning string, err error)
 			input = strings.Trim(strings.TrimSpace(strings.TrimPrefix(line, "Input:")), "\"")
 		} else if strings.HasPrefix(line, "Reasoning:") {
 			reasoning = strings.TrimSpace(strings.TrimPrefix(line, "Reasoning:"))
+			break // Stop after finding the first complete function
 		}
 	}
 	if functionName == "" {
@@ -233,31 +235,6 @@ func parseOutput(text string) (functionName, input, reasoning string, err error)
 	}
 	return
 }
-
-// func createPrompt(userInput string, knowledge []string) string {
-// 	knowledge_str := strings.Join(knowledge, "\n")
-// 	return fmt.Sprintf(`Task: You are a functional agent which analyzes the input and decides the next step as a Function and input. Do not write anything else or you will fail. Strictly follow the given output.
-// Input: %s
-// Active Knowledge:
-// %s
-// Functions:
-// - Function: Search
-//   Description: This search is useful to get reliable quick data.
-//   Input: Search  Input
-// - Function: Browse
-//   Description: This browse is useful when users want to get content of a page.
-//   Input: websiste url
-// - Function: CurrentTime
-//   Description: Get Current Time
-// - Function: Finish
-//   Description: This is useful when the agent decides to finish this task.
-//   Input: Result of the task.
-// Output should only include one function as the next step using the format:
-// Function: Function name
-// Input: Function Input as text
-// Reasoning: Reason to choose the Function and Input
-// `, userInput, knowledge_str)
-// }
 
 func PullModel() error {
 	ollamaEndpoint := os.Getenv("OLLAMA_ENDPOINT") // Replace with your actual endpoint
@@ -476,4 +453,13 @@ func findIsRelatedStatus(text string) bool {
 func GetCurrentTimeString() string {
 	currentTime := time.Now()
 	return fmt.Sprintf("Current time is %s\n", currentTime.Format("2006-01-02 15:04:05"))
+}
+
+func CurrentTime(_ string) string {
+	currentTime := time.Now()
+	return fmt.Sprintf("Current time is %s\n", currentTime.Format("2006-01-02 15:04:05"))
+}
+
+func Finish(input string) string {
+	return input
 }
