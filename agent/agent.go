@@ -40,7 +40,7 @@ func NewAgent(options ...AgentOption) *Agent {
 	return agent
 }
 
-func (a *Agent) GeneratePrompt(input ...string) (string, error) {
+func (a *Agent) GeneratePrompt(input ...string) (string, string, error) {
 	var userInput string
 	if len(input) > 0 {
 		userInput = input[0]
@@ -49,7 +49,11 @@ func (a *Agent) GeneratePrompt(input ...string) (string, error) {
 	}
 
 	// Call the external GeneratePrompt function with the agent's PromptTree, userInput, and MaxLength
-	return prompt.GeneratePrompt(a.PromptTree, userInput, a.MaxLength)
+	system, err := prompt.GeneratePrompt(a.PromptTree, userInput, a.MaxLength)
+	if err != nil {
+		return "", "", err
+	}
+	return system, userInput, err
 }
 
 // DefaultBuildTree builds the default tree of FunctionNodes
@@ -66,9 +70,9 @@ func DefaultBuildTree() *prompt.FunctionNode {
 	functions := func(input string, maxLength int) (string, error) {
 		return "Functions:\n-Search\n-Browse\n-Final\n", nil
 	}
-	askingDescription := func(input string, maxLength int) (string, error) {
-		return fmt.Sprintf("Human: %s\nAI:", input), nil
-	}
+	// askingDescription := func(input string, maxLength int) (string, error) {
+	// 	return fmt.Sprintf("Human: %s\nAI:", input), nil
+	// }
 
 	root := prompt.NewFunctionNode("root", 0, nil,
 		prompt.NewFunctionNode("system", 1, systemDescription),
@@ -77,7 +81,7 @@ func DefaultBuildTree() *prompt.FunctionNode {
 			prompt.NewFunctionNode("stm", 2, shortTermMemory),
 		),
 		prompt.NewFunctionNode("functions_optional", 3, nil, prompt.NewFunctionNode("functions", 1, functions)),
-		prompt.NewFunctionNode("asking", 4, askingDescription),
+		// prompt.NewFunctionNode("asking", 4, askingDescription),
 	)
 
 	return root
@@ -85,7 +89,7 @@ func DefaultBuildTree() *prompt.FunctionNode {
 
 func BuildTree(agent *Agent) *prompt.FunctionNode {
 	systemDescription := func(input string, maxLength int) (string, error) {
-		content := "<|system|>You are an AI Assistant.\nThis is a friendly conversation between Human and AI.\nYour primary role is to answer questions and provide assistance.\n" +
+		content := "You are an AI Assistant.\nThis is a friendly conversation between Human and AI.\nYour primary role is to answer questions and provide assistance.\n" +
 			"Output should only include one function as the next step using the format:\n" +
 			"Function: name of the function\n" +
 			"Input: Function Input as text\n" +
@@ -116,9 +120,9 @@ func BuildTree(agent *Agent) *prompt.FunctionNode {
 
 		return content, nil
 	}
-	askingDescription := func(input string, maxLength int) (string, error) {
-		return fmt.Sprintf("</s><|user|>%s\n</s><|assistant|>", input), nil
-	}
+	// askingDescription := func(input string, maxLength int) (string, error) {
+	// 	return fmt.Sprintf("%s\n", input), nil
+	// }
 
 	root := prompt.NewFunctionNode("root", 0, nil,
 		prompt.NewFunctionNode("system", 1, systemDescription),
@@ -127,7 +131,7 @@ func BuildTree(agent *Agent) *prompt.FunctionNode {
 			prompt.NewFunctionNode("stm", 2, shortTermMemory),
 		),
 		prompt.NewFunctionNode("functions_optional", 3, nil, prompt.NewFunctionNode("functions", 1, functions)),
-		prompt.NewFunctionNode("asking", 4, askingDescription),
+		// prompt.NewFunctionNode("asking", 4, askingDescription),
 	)
 
 	return root
@@ -150,7 +154,7 @@ func (a *Agent) Run(input ...string) (string, error) {
 	var generateResp *GenerateResponse
 
 	for functionName != "Finish" {
-		prompt, err := a.GeneratePrompt(userInputInferred)
+		system, prompt, err := a.GeneratePrompt(userInputInferred)
 		if err != nil {
 			fmt.Println("Error generating prompt:", err)
 			return "", err
@@ -158,7 +162,7 @@ func (a *Agent) Run(input ...string) (string, error) {
 
 		// log.Println(prompt)
 
-		generateResp, err = callAPI(prompt)
+		generateResp, err = callAPI(system, prompt)
 		if err != nil {
 			fmt.Println("Error calling API:", err)
 			return "", err
@@ -197,6 +201,7 @@ func (a *Agent) Run(input ...string) (string, error) {
 		// }
 		if len(result) > 0 {
 			a.MessageHistory.AddMessage(messages.FunctionResult, "System", functionName, result)
+			lastGoodInput = result
 		}
 	}
 

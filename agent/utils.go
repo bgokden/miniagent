@@ -23,12 +23,15 @@ import (
 	serpapi "github.com/serpapi/google-search-results-golang"
 )
 
-const MODEL_NAME = "zephyr"
+// const MODEL_NAME = "zephyr"
+const MODEL_NAME = "neural-chat"
+const LOG_MODEL = true
 
 type GenerateRequest struct {
-	Model  string `json:"model"`
-	Prompt string `json:"prompt"`
-	Raw    bool   `json:"raw"`
+	Model  string `json:"model,omitempty"`
+	System string `json:"system,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	Raw    bool   `json:"raw,omitempty"`
 	Stream bool   `json:"stream"`
 }
 
@@ -120,7 +123,7 @@ func Browse(url string) string {
 		chromedp.CaptureScreenshot(&b1),
 		chromedp.ActionFunc(func(c context.Context) error {
 			printNodes(&sb, nodes, "", "  ", 20)
-			return nil              
+			return nil
 		}),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			cookies, err := network.GetCookies().Do(ctx)
@@ -316,14 +319,15 @@ func PullModel() error {
 	return nil
 }
 
-func callAPI(prompt string) (*GenerateResponse, error) {
+func callAPI(system string, prompt string) (*GenerateResponse, error) {
 	ollamaEndpoint := os.Getenv("OLLAMA_ENDPOINT")
 	generateEndpoint := fmt.Sprintf("%s/api/generate", ollamaEndpoint)
 
 	requestBody := &GenerateRequest{
 		Model:  MODEL_NAME,
+		System: system,
 		Prompt: prompt,
-		Raw:    true,
+		Raw:    false,
 		Stream: false,
 	}
 
@@ -364,10 +368,12 @@ func callAPI(prompt string) (*GenerateResponse, error) {
 		}
 		log.Printf("Response: %q", body)
 		if string(body) == "error code: 524" {
-			return callAPI(prompt)
+			return callAPI(system, prompt)
 		}
 		return nil, err
 	}
+
+	log.Printf("\n------------\nSystem:\n%s\nPrompt:\n%s\nOutput:\n%s\n------------\n", system, prompt, generateResp.Response)
 
 	return &generateResp, nil
 }
@@ -390,9 +396,9 @@ func splitIntoChunks(text string, chunkSize int) []string {
 }
 
 func inferPrompt(input string) string {
-	systemText := "Analyze the user's original intent and reformulate it into a well-structured, single-paragraph input. This input should clearly outline the task requirements and specify the criteria for successful completion by an AI system, based on the following provided text:"
-	prompt := fmt.Sprintf("<|system|>%s</s><|user|>%s</s><|assistant|>", systemText, input)
-	response, err := callAPI(prompt)
+	systemText := "Analyze the user's original intent and reformulate it into a well-structured, single-paragraph input. This input should clearly outline the task requirements, how the output should be written and specify the criteria for successful completion by an AI system, based on the following provided text:"
+	// prompt := fmt.Sprintf("<|system|>%s</s><|user|>%s</s><|assistant|>", systemText, input)
+	response, err := callAPI(systemText, input)
 	if err != nil {
 		return input
 	}
@@ -401,8 +407,8 @@ func inferPrompt(input string) string {
 
 func restructureOutput(input string) string {
 	systemText := "Restructure output as follows:\nFunction: name of the function\nInput: Funtion Input\nReasoning: Why this function is selected\nCritism: A critic of this action\n"
-	prompt := fmt.Sprintf("<|system|>%s</s><|user|>%s</s><|assistant|>", systemText, input)
-	response, err := callAPI(prompt)
+	// prompt := fmt.Sprintf("<|system|>%s</s><|user|>%s</s><|assistant|>", systemText, input)
+	response, err := callAPI(systemText, input)
 	if err != nil {
 		return input
 	}
@@ -432,9 +438,8 @@ func summarizeWebPage(topic, input string) string {
 		Previous Extract:
 		%s
 
-		WebPage:
-		%s"`, topic, previous, text)
-		response, err := callAPI(prompt)
+		WebPage as input:"`, topic, previous)
+		response, err := callAPI(prompt, text)
 		if err != nil {
 			if len(previous) > 0 {
 				return previous
