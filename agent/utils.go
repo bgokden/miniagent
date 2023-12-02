@@ -120,7 +120,7 @@ func Browse(url string) string {
 		chromedp.CaptureScreenshot(&b1),
 		chromedp.ActionFunc(func(c context.Context) error {
 			printNodes(&sb, nodes, "", "  ", 20)
-			return nil
+			return nil              
 		}),
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			cookies, err := network.GetCookies().Do(ctx)
